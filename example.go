@@ -5,75 +5,54 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
-
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
+	"os"
+	"strconv"
 )
-
-type CODE_LANGUAGE int32
-
-const (
-	PHP CODE_LANGUAGE = iota + 1
-	Go
-	Java
-	NodeJS
-	Python
-	Other
-)
-
-type Application struct {
-	Id              uint           `json:"id" gorm:"primarykey"`
-	ApplicationName string         `json:"application_name" gorm:"column:application_name"`
-	Description     string         `json:"description" gorm:"column:description"`
-	GitAddress      string         `json:"git_address" gorm:"column:git_address"`
-	CodeLanguage    CODE_LANGUAGE  `json:"code_language" gorm:"column:code_language"`
-	DeletedAt       gorm.DeletedAt `json:"-" gorm:"index;comment:删除时间"`
-}
-
-func (Application) TableName() string {
-	return "application"
-}
 
 func main() {
-	dsn := "devops:xxxxxx@tcp(rm-xxxxxx.mysql.rds.aliyuncs.com:3306)/devops?charset=utf8&parseTime=True&loc=Local&timeout=1000ms"
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if len(os.Args) < 3 {
+		fmt.Println("Usage: ./example <IP_ADDRESS> <PORT>")
+		os.Exit(1)
+	}
+	ip := os.Args[1]
+	portStr := os.Args[2]
+
+	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		panic("failed to connect database")
+		fmt.Println("Invalid port number:", portStr)
+		os.Exit(1)
 	}
 
-	apps := []Application{}
-	db.Find(&apps)
-
-	for _, app := range apps {
-		if app.CodeLanguage == NodeJS {
-			continue
-		}
-		fmt.Println(app.ApplicationName)
-
-		var response interface{}
-		b, _ := json.Marshal(map[string]interface{}{
-			"envId": 7,
-			"appId": app.Id,
-		})
-		resp := PublicHttpRequest(
-			"PUT",
-			"http://ops.xxxxx.com/api/v1/cicd/config/map",
-			b,
-			map[string]string{"Content-Type": "application/json",
-				"Authorization": "Bearer gmMe_gdjn1pcS3eycgH_3eKtOFDqEmcPEdzEpPEOkKE",
-			},
-		)
-
-		defer resp.Body.Close()
-		body, _ := ioutil.ReadAll(resp.Body)
-
-		err := json.Unmarshal(body, &response)
-		if err != nil {
-			fmt.Println(err)
-		}
-		fmt.Println(response)
+	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", ip, port))
+	if err != nil {
+		SendAlert(fmt.Sprintf("Port %d on %s is not reachable", port, ip))
+		os.Exit(1)
 	}
+	defer conn.Close()
+
+	fmt.Printf("Port %d on %s is reachable\n", port, ip)
+}
+
+func SendAlert(msg string) {
+	b, _ := json.Marshal(map[string]interface{}{
+		"msgtype": "text",
+		"text": map[string]string{
+			"content": msg,
+		},
+	})
+
+	resp := PublicHttpRequest(
+		"POST",
+		"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=73de9b90-87d2-4160-a541-091ec270b5e4",
+		b,
+		map[string]string{"Content-Type": "application/json"},
+	)
+
+	defer resp.Body.Close()
+	body, _ := ioutil.ReadAll(resp.Body)
+	fmt.Println(string(body))
 }
 
 func PublicHttpRequest(method, url string, values []byte, header map[string]string) *http.Response {
